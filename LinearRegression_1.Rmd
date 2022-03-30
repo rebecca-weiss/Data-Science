@@ -1,0 +1,176 @@
+---
+title: "DA5020 -- Assignment 9"
+author: "Rebecca Weiss"
+date: "11/16/2021"
+output: pdf_document
+---
+
+***
+Clear the workspace:
+```{r}
+rm(list = ls())
+```
+
+```{r setup, warning=FALSE, message=FALSE}
+#load all necessary libraries
+library(tidyverse)
+library(lubridate)
+library(openintro)
+
+```
+
+
+## 1. Load the data into your R environment directly from the URL. Ensure that you inspect the data, so that you know how to identify the necessary columns. 
+```{r}
+url <- 'https://stats.oecd.org/sdmx-json/data/DP_LIVE/.MEATCONSUMP.../OECD?contentType=csv&detail=code&separator=comma&csv-lang=en'
+
+df <- read.csv(url)
+
+summary(df)
+str(df)
+```
+
+
+## 2. Extract the poultry consumption data, from 1994 to 2014, for Mexico, that is measured in thousand tonnes of carcass weight. Pay close attention to the SUBJECT and MEASURE fields to filter the appropriate type of meat and the correct measurement. Visualize the extracted data, using a line chart, and comment on the trend.
+```{r}
+# filter data
+poultry <- df %>% 
+  filter(SUBJECT == "POULTRY" & MEASURE == "THND_TONNE" 
+         & LOCATION == "MEX") %>% 
+  filter(TIME >= 1994, TIME < 2015) # get correct years only
+
+# view and make sure ranges are correct
+head(poultry)
+summary(poultry)
+  
+```
+From the output of `str(poultry)`, we can confirm that the, SUBJECT, MEASURE, LOCATION and TIME variables are all within the correct ranges the question asked for. Now we will plot it: 
+```{r}
+ggplot(data = poultry, aes(x = TIME, y = Value)) +
+  geom_line() +
+  labs(title = "Yearly Consumption of Poultry in Mexico 1994 - 2014",
+       subtitle = "source = https://data.oecd.org/agroutput/meat-consumption.htm",
+       x = "Year",
+       y = "Consumption (thousand tonnes of carcass weight)") +
+  theme(plot.subtitle=element_text(size=6, hjust=0.5, face="italic", color="black")) +
+  theme(plot.title=element_text(size=14, hjust=0.5, face="bold", color="black"))  +
+  scale_y_continuous(labels = scales::comma, limits = c(1000, 4000)) +
+  scale_x_continuous(limits = c(1994, 2014), breaks = scales::breaks_width(2)) +
+  theme(axis.text = element_text(size=6, hjust=0.5, color="black")) 
+```
+From the output of this graph, we see that over time the amount of poultry consumed in Mexico from 1994 - 2014 increases overall. Most notably, the increases in consumption happen consistently, with the exception of from 1995 - 1995, where it appears consumption remains flat and then takes off after 1996. 
+
+
+Use the extracted poultry data to answer the questions below. 
+
+## 3. Forecast the poultry consumption for 2014, using a simple moving average of the following four time periods: 2010, 2011, 2012 and 2013. After which, calculate the error (i.e. the difference between the actual and the predicted values). Evaluate the results; how does it compare to the actual data for 2014? 
+```{r}
+# select variables, filter for years, average
+mavg_vals <- poultry %>% 
+  select(TIME, Value) %>% 
+  filter(TIME < 2014, TIME > 2009)
+
+mavg = mean(mavg_vals$Value)
+
+# view 
+# mavg
+
+actual <- poultry %>%
+  filter(TIME == 2014) %>%
+  select(Value)
+
+error = actual - mavg
+```
+Using the moving average to forecast the value for 2014, we get `r mavg`, which is slightly lower than the actual 2014 value, `r actual`. The error from the forecast and actual value = `r error` thousand tonnes of carcass weight. 
+
+
+## 4. Forecast the poultry consumption for 2014, using a three year weighted moving average. Apply the following weights: 5, 7, and 15 for the respective years 2011, 2012, and 2013. After which, calculate the error and evaluate the result from your prediction. 
+```{r}
+# get rid of 2010 year, add weights
+new <-mavg_vals %>%
+  filter(TIME > 2010) %>% 
+  mutate("Weight" = c(5, 7, 15), "Weight_Value" = Value * Weight)
+  
+weight_avg = sum(new$Weight_Value)/sum(new$Weight)
+error_weight = actual - weight_avg
+```
+As we can see from the output calculations, when adding weights and using the years 2011, 2012, and 2013 for a 3 year weighted moving average, we get a forecast of `r weight_avg` for 2014. The forecasted value is still lower than actual value, `r actual`, with an error of `r error_weight`. Thus, the forecasted value using this method is slightly closer to the actual value for 2014 than the moving average from 2010, 2011, 2012 and 2013, as seen in question 3. 
+
+
+## 5. Forecast the poultry consumption for 2014 using exponential smoothing (alpha is 0.9). Comment on the prediction for 2014 with the actual value. Note: use data from 1994 to 2013 to build your model. 
+```{r, warning=FALSE}
+# select variables we want, drop 2014
+smooth_df <- poultry %>% 
+  select(TIME, Value) %>% 
+  filter(TIME != 2014)
+
+# add new values to df
+smooth_df$Ft <- 0
+smooth_df$E <- 0
+
+# have to calculate first row manually 
+smooth_df$Ft[1] <- smooth_df[1,2]
+
+# iterate over the rest of the rows 
+for (i in 2:nrow(smooth_df)) {
+  smooth_df$Ft[i] <- smooth_df$Ft[i-1] + 0.9*smooth_df$E[i-1] 
+  smooth_df$E[i] <- smooth_df[i,2] - smooth_df$Ft[i]
+}
+
+# view Error Ft calculated
+smooth_df
+
+n <- nrow(smooth_df)
+f_exp <- smooth_df$Ft[n] + 0.9*smooth_df$E[n] 
+error_smooth <- actual - f_exp
+
+```
+Using the data from 1994-2013 for exponential smoothing with an alpha = 0.90, the forecast of the value of consumption in 2014 = `r f_exp`, and the actual value = `r actual`. The error between the exponentially smoothed value and the actual for 2014 = `r error_smooth`. As we can see from the output, the exponential smoothing method with an alpha = 0.90 has the lowest difference between the predicted vs actual 2014 value, and is just ~120 thousand tonnes lower than the true value. 
+
+
+## 6. Build a simple linear regression model using the TIME and VALUE for all data from 1994 to 2013. After which, forecast the poultry consumption for 2014 to 2016. Comment on the results. Note: Your predictions should be calculated using the coefficients. Do not use any libraries to make your predictions. 
+```{r}
+# select variables we want, drop 2014
+slr <- poultry %>% 
+  select(TIME, Value) %>% 
+  filter(TIME != 2014)
+
+# build linear regression model
+model <- lm(Value ~ TIME, data = slr)
+summary(model)
+
+# build to estimate value using output of model
+slinreg <- function(x)  {
+  coeff = as.integer(model$coefficients[2])
+  int = as.integer(model$coefficients[1])
+  ypred = (coeff * x) + int
+  return(ypred)
+}
+
+# apply function to get predictions for years
+years <- c(2014, 2015, 2016)
+preds <- sapply(years, slinreg)
+
+# View predicted values as a tibble for each year 
+tibble("2014" = preds[1], "2015" = preds[2], "2016" = preds[3])
+```
+
+
+
+```{r, warning=FALSE}
+# visualize data used to build linear regression (extra)
+ggplot(slr, aes(x=TIME, y=Value)) +
+  geom_smooth(method = 'lm') +
+  geom_point() +
+  labs(title = "Simple Linear Regression of Poultry Consumption 1994-2013",
+       subtitle = "source = https://data.oecd.org/agroutput/meat-consumption.htm",
+       x = "Year",
+       y = "Consumption (thousand tonnes of carcass weight)") +
+  theme(plot.subtitle=element_text(size=6, hjust=0.5, face="italic", color="black")) +
+  theme(plot.title=element_text(size=14, hjust=0.5, face="bold", color="black"))  +
+  scale_y_continuous(labels = scales::comma, limits = c(1000, 4000)) +
+  scale_x_continuous(limits = c(1994, 2013), breaks = scales::breaks_width(2)) +
+  theme(axis.text = element_text(size=6, hjust=0.5, color="black")) 
+```
+The tibble output shows that based on the simple linear regression model, the predictions for 2014 = `r preds[1]`, 2015 = `r preds[2]`, and 2016 = `r preds[3]`. If we look at the graph with the smooth linear regression line, this makes sense; it look like from 2009 and on there are a general trend for the values to deviate below the trendline, so it is possible the values are smaller. One other thing to keep in mind as well is that the actual value for 2014 = `r actual`, which is much higher than the predicted value for 2014. Additionally, the moving averages were much closer to the actual value, suggesting that may be a better method for forecasting, at least for the year 2014.
+
