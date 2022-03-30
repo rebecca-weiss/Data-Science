@@ -1,0 +1,147 @@
+---
+title: "SQLite"
+author: "Rebecca Weiss"
+date: "10/19/2021"
+output: pdf_document
+---
+***
+```{r setup, warning=FALSE, message=FALSE}
+#load all necessary libraries
+library(RSQLite)
+library(DBI)
+library(tidyverse)
+```
+
+Clear the workspace:
+```{r}
+rm(list = ls())
+```
+
+
+## 1. This question should be done completely in the SQLite Console, not in R. Start by loading the imdb.db file using the console and download the directors.csv file (from Canvas). Perform the following tasks: 
+  1. (5pts) Create a table named director_info using SQLite; the columns are: Director_ID, and Director_Name. The Director_ID should be the primary key. 
+  2. (5pts) Import the entire data from the CSV file into the director_info table using the SQLite .import command (see helpful resources below). Verify that your data was imported correctly. Copy the queries above into a comment chunk in your Rmd file
+```{r}
+# /Applications/sqlite3 imdb.db
+# .open "imdb.db"
+# .tables
+
+# create table director_info(
+#   Director_ID TEXT PRIMARY KEY,
+#   Director_Name TEXT);
+# .separator ','
+# .import directors.csv director_info
+
+## verify it loaded correctly
+# select * from director_info;
+```
+
+
+## 2. This question should be done in RStudio. Connect to the database, using R, and write queries to answer the questions below (answer each question in a separate R chunk). Do not load the entire database or its tables in your R environment.
+```{r}
+db <- dbConnect(SQLite(), db="imdb.db")
+
+# make sure tables are there
+dbListTables(db)
+```
+
+1. (5 pts) Count the number of rows in the movie_info and director_info tables.
+```{r, warning=FALSE, message=FALSE}
+# rows from movie_info
+n_movie <- dbFetch(dbSendQuery(db, "SELECT COUNT(*) FROM movie_info;"))
+print(paste("The number of rows in movie_info =", n_movie))
+
+# rows from director_info
+n_director <- dbFetch(dbSendQuery(db, "SELECT COUNT(*) FROM director_info;"))
+print(paste("The number of rows in director_info =", n_director))
+```
+
+2. (5 pts) How many movies were released between 2010 and 2020 (inclusive)? Visualize the results. 
+```{r, warning=FALSE, message=FALSE}
+# first, make sure we know the movie column names
+dbGetQuery(db, "PRAGMA table_info(movie_info)")$name
+
+# know column name "Release_Year", now can filter + visualize 
+number_movie <- dbGetQuery(db, 'SELECT "Release_Year",  count(*)
+FROM movie_info
+WHERE "Release_Year" > 2009 AND "Release_Year" < 2021
+GROUP BY "Release_Year"')
+
+(number_movie <- number_movie %>% 
+    rename(movies =`count(*)`))
+
+ggplot(number_movie, aes(x=Release_Year, y=movies)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Number of Movies Released Annually from 2010-2020",
+       x = "Year",
+       y = "Number of Movies Released") +
+    theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold"))
+
+```
+
+
+3. (5 pts) What is the minimum, average and maximum ratings for “Action” movies.  Ensure that you query the genre using wild cards.
+```{r}
+dbGetQuery(db, 'SELECT max(IMDB_Rating), min(IMDB_Rating), avg(IMDB_Rating)
+FROM movie_info
+WHERE Genre LIKE "%action%";')
+```
+
+4. (5 pts) What are the 25 highest-grossing movies within the dataset? Display the title, genre and gross. 
+```{r}
+dbGetQuery(db, 'SELECT Series_Title, Genre, Gross
+FROM movie_info
+WHERE Gross != "NA"
+ORDER BY Gross DESC LIMIT 25;')
+```
+
+5. (10 pts) Which directors have the highest-grossing movies. Display the director name and the totalgross. Ensure that you join the necessary tables. Visualize the results using a Bar chart.
+```{r}
+# get data for top 10 directors with highest grossing movies
+(top_directors <- dbGetQuery(db, 'SELECT Director_Name, Gross
+FROM movie_info
+INNER JOIN director_info on
+movie_info.Director_ID=director_info.Director_ID
+WHERE Gross != "NA"
+GROUP BY Director_Name 
+ORDER BY Gross DESC LIMIT 10;'))
+
+
+ggplot(top_directors, aes(x=reorder(Director_Name, Gross), y=Gross)) +
+  geom_bar(stat = "identity", fill = "#FF0099FF") +
+  labs(title = "10 Directors with Highest Grossing Movies",
+       x = "Director Name",
+       y = "Total Gross") +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  coord_flip()
+
+```
+
+6. (10 pts) Create a function called verifyDirector() that takes a director name as its argument, and queries the database to check if the director exists. Your function should display a message to notify the user if the director was found or not.
+```{r}
+verifyDirector <- function(director_name)  {
+  directors <- dbGetQuery(db, 'SELECT Director_Name 
+FROM director_info;')
+  
+  if (any(directors$Director_Name == director_name)) {
+    print("Director name entered is in database")
+  } else  {
+    print("Director name is not in database")
+  }
+}
+
+```
+```{r}
+# verify it works:
+verifyDirector("Peter Jackson") # should exist 
+verifyDirector("Willy Wonka") # should not exist
+```
+
+## 3. What is the average runtime for the thriller movie genre.
+```{r}
+dbGetQuery(db, 'SELECT  avg(Runtime)
+FROM movie_info
+WHERE Genre LIKE "%thriller%";')
+```
+From the output, the average run time of the thriller genre is ~119 minutes. 
+
