@@ -1,0 +1,124 @@
+---
+title: "Working with XML Data"
+author: "Rebecca Weiss"
+date: "10/7/2021"
+output: pdf_document
+---
+***
+
+```{r setup, warning=FALSE, message=FALSE}
+#load all necessary libraries
+library(RCurl)
+library(XML)
+library(tidyverse)
+library(stringr)
+```
+
+Clear the workspace:
+```{r}
+rm(list = ls())
+```
+
+## 1. Load the XML data directly from the URL below into a data frame (or tibble) and display the dimensions of the data. 
+```{r}
+# load XML data into df
+url <- getURL("https://www.senate.gov/general/contact_information/senators_cfm.xml")
+senate_df <- xmlToDataFrame(url)
+
+# display dims
+dim(senate_df)
+```
+After loading the XML and putting into a dataframe, we see from running `dim(senate_df)` that there are 13 variables/columns and 101 rows/observations. 
+
+
+*use this XML data to answer 2 and 3*
+
+
+## 2. Construct a regular expression (regex) to extract only the first and last names of each senator; the regex should remove their middle initial and/or suffix e.g. remove Jr. III, etc. Ensure that the updated names are reflected in the dataframe.
+```{r}
+# get rid of anything after first/last name and print to confirm
+senate_df <- senate_df %>%  drop_na(first_name)
+(senate_df$first_name <- sub("[[:space:]].*", "", senate_df$first_name))
+(senate_df$last_name <-sub("[[:space:]].*", "", senate_df$last_name))
+
+
+```
+From question 1, we know that there is an NA value that we drop first. Then we modify the dataframe to get rid of any cases with space in them to get only first and last name.
+
+
+## 3. Create a function called senatorsByState() which takes the two letter abbreviation for a US State as its input argument and displays the first name, last name and party of each senator for the selected state. For example, if the user enters ‘MA’ your function should display a message that is similar to the following: “The senators for MA are: Edward Markey, Democratic Party and Elizabeth Warren, Democratic Party
+```{r}
+senatorsByState <- function(x)  {
+  df <- senate_df %>% 
+    select(state, first_name, last_name, party) %>% 
+    filter(state == x)
+
+  print(paste0("The senators for ", df$state[1], " are: ",
+            df$first_name[1], " ",df$last_name[1], ", " ,df$party[1],
+            " and ", df$first_name[2], " ", df$last_name[2], ", " ,df$party[2]))
+}
+
+# test function
+senatorsByState("MA")
+```
+We created a function that selects the rows needed, filters so state is == to input, and prints the information as requested. We see that when we run `senatorsByState("MA")`, the function satisfied our goal. 
+
+
+*Answer the questions below using the attached dataset on the Ratio Of Female To Male Youth Unemployment Rate.*
+
+## 4. Download the attached csv file from Canvas and load it in your R environment. Perform steps to tidy the data and the prepared data should be divided across two tibbles named country_name and indicator_data. The country_name tibble should contain the country name and country code (ensure that you remove duplicates), and the indicator_data tibble should include the country_code, year, and value. Note: Tidy the data using pivot_longer(), pivot_wider() and separate(), where applicable.
+```{r}
+# load entire data set and skip first 3 rows where there is no data of use:
+unemp_df <- read_csv("Ratio Of Female To Male Youth Unemployment Rate .csv", skip = 3)
+
+# create tibble for country_name, remove duplicates, view:
+(country_name <- as_tibble(unemp_df) %>% 
+  select(c("Country Name", "Country Code")) %>% 
+  distinct())
+
+# create tibble for indicator_data, tidy data as needed, view:
+(indicator_data <- as_tibble(unemp_df) %>% 
+      pivot_longer(cols = 5:65,
+               names_to = "year",
+               values_to = "value",
+               values_drop_na = TRUE) %>% 
+  select(c("Country Code", "year", "value")))
+```
+The data was loaded and tidied so that the years were pivoted into one variable, *year* and the unemployment ratio was filled in for their values, recoded as *value* in the dataframe. The indicator_data and country_name tibbles were then created and displayed based on the data asked for in the question. We see that there are 263 individual countries from the country_name data.  
+
+
+## 5. Select five countries from each of the following continents: Africa, Asia and Europe. Visualize their respective data from the last 20 years using a line chart; use facet_wrap to display the data for each continent in its own chart. Explain your observations about the ratio of female to male youth unemployment rate in the selected regions.
+```{r}
+# join indicator_data and country_name to combine country code from last 20 years
+joined <- left_join(indicator_data, country_name, by = "Country Code") %>% 
+  filter(year > 1999)
+joined$year <- as.integer(joined$year)
+
+# select 5 countries from each continent and put into their own variable
+afr <- joined[joined$`Country Name` %in% c(
+  "Zambia", "Kenya", "Zimbabwe", "Ethiopia", "Sudan"), ] %>% 
+  mutate(Continent = "Africa")
+
+eur <- joined[joined$`Country Name` %in% c(
+  "Italy", "Greece", "Germany", "Belgium", "Switzerland"), ] %>% 
+  mutate(Continent = "Europe")
+
+asia <- joined[joined$`Country Name` %in% c(
+  "Japan", "Indonesia", "China", "India", "Afghanistan"), ] %>% 
+  mutate(Continent = "Asia")
+
+# bind all data together to one dataframe
+alldf <- rbind(afr, eur, asia) 
+
+# plot results
+ggplot(data = alldf, aes(x=year, y=value, color = `Country Name`, 
+                         group = `Country Name`)) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(2000, 2020, by = 5)) + 
+  theme(axis.text.x = element_text(angle=90)) +
+  labs(title = "Gender Youth Unemployment Over the Last 20 Years",
+       y = "Female:Male Unemployment Ratio",
+       x = "Year") +
+  facet_wrap(~Continent) 
+```
+From the graph of this data separated by continent, we see many discrepancies by country in addition to by continent for ratio of female: male unemployment. For example, in Asia, while there remained different values by country, we see that the data is relatively flat over time compare to the other two continents, with Afghanistan remaining consistently highest. In Europe, we see many jumps over time,but what is most striking is that jump that occurs in Greece in the early 2000s, then drastic fall recently. In Africa we see that Ethiopia is consistently the highest, but there is a massive jump in the numbers ~2006 where the ratio went up and stayed higher. 
