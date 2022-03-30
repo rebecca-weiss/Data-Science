@@ -1,0 +1,428 @@
+---
+title: "DA5020 -- Practicum 3"
+author: "Rebecca Weiss"
+date: "12/6/2021"
+output: pdf_document
+---
+***
+Clear the workspace:
+```{r}
+rm(list = ls())
+```
+
+```{r setup, warning=FALSE, message=FALSE}
+#load all necessary libraries
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+library(FNN)
+
+```
+
+
+## 1. Question 1 — (20 points) +10 optional points CRISP-DM: Data Understanding 
+• Load the NYC Green Taxi Trip Records data directly from the URL into a data frame or tibble. 
+```{r cache=TRUE}
+df_load <- read_csv("https://s3.amazonaws.com/nyc-tlc/trip+data/green_tripdata_2017-12.csv")
+```
+
+• Data exploration: explore the data to identify any patterns and analyze the relationships between the features and the target variable i.e. tip amount. At a minimum, you should analyze: 
+1) the distribution, 2)  the correlations 3) missing values and 4) outliers — provide supporting visualizations and explain all your steps. 
+Tip: remember that you have worked with this dataset in your previous assignments. You are free to reuse any code that support your analysis.
+```{r}
+str(df_load)
+```
+
+From the webpage, we know that some of these values should be factors, and the datetime variables should be dates, so we start with converting those to their correct types, then view the data summary:
+```{r}
+# convert to correct formats
+tripdata_df <- df_load %>% 
+  mutate(store_and_fwd_flag = factor(store_and_fwd_flag),
+         passenger_count = factor(passenger_count),
+         PULocationID = factor(PULocationID),
+         DOLocationID = factor(DOLocationID),
+         lpep_dropoff_datetime = ymd_hms(lpep_dropoff_datetime),
+         lpep_pickup_datetime = ymd_hms(lpep_pickup_datetime))
+
+tripdata_df$VendorID <- factor(tripdata_df$VendorID, ordered = TRUE,
+       labels = c("Creative Mobile Technologies, LLC","VeriFone Inc."))
+
+tripdata_df$RatecodeID <- factor(tripdata_df$RatecodeID, ordered = TRUE, 
+      levels = (1:6), labels = c("Standard rate", "JFK", "Newark", "Nassau or Westchester", "Negotiated fare", "Group ride"))
+
+tripdata_df$payment_type <- factor(tripdata_df$payment_type, ordered = TRUE,
+      levels = (1:6), labels = c("Credit card", "Cash", "No charge", "Dispute", "Unknown","Voided trip"))
+
+tripdata_df$trip_type <- factor(tripdata_df$trip_type, ordered = TRUE,
+                                levels = (1:2), labels = c("Street-hail", "Dispatch"))
+
+# view summary:
+summary(tripdata_df)    
+```
+From the summary, we see that there are some values that do not make sense: for example we see negative values for *tolls_amount*, *tip_amount*, *mta_tax*, *total_amount*, *fare_amount*, and *extra*. Additionally, we see that there are dates outside the range of December 2017 for the *lpep_pickup_datetime* and *lpep_dropoff_datetime* that will need to be dropped in the data cleaning / transformation step. Of note, *ehail_fee* is all NA, and the only other NA in the dataset is one value for *trip_type*, so that is encouraging. 
+
+To visualize some of the data, lets look the distribution counts of values that could be useful to know:  
+```{r}
+tripdata_df %>% 
+  group_by(passenger_count) %>% 
+  count() %>% 
+  ggplot(aes(passenger_count, n, fill = passenger_count)) +
+  geom_col() +
+  labs(y = "Number of Trips")
+
+summary(tripdata_df$passenger_count)
+
+```
+Passenger count is most frequently 1, with a few more 2-6, and very rarely 0, 7, 8, 9 -- range that was determined from the output of `summary(tripdata_df)`. This is important to know, because since most of the data will be from 1 passenger, it could *appear* that 1 passenger impacts tip amount, when in fact it is most frequently occurring. 
+
+Let look at how much data is outside the scope of this dataset, before or after December 2017. 
+```{r}
+invalid_date <- tripdata_df %>% 
+  filter(year(lpep_pickup_datetime) != 2017 | year(lpep_dropoff_datetime) != 2017) %>% 
+  filter(month(lpep_pickup_datetime) != 12 | month(lpep_dropoff_datetime) != 12)
+
+```
+There are `r count(invalid_date)`  values outside of the range of the dates this dataset encompasses. 
+
+Lets look at some other distributions/counts:
+```{r}
+ggplot(data = tripdata_df, aes(x = VendorID, fill=VendorID)) +
+  geom_bar()  +
+  labs(y = "Number of Trips")
+
+summary(tripdata_df$VendorID)
+```
+
+
+```{r}
+ggplot(data = tripdata_df, aes(x = trip_type, fill=trip_type)) +
+  geom_bar()  +
+  labs(y = "Number of Trips")
+
+summary(tripdata_df$trip_type)
+```
+
+```{r}
+ggplot(data = tripdata_df, aes(x = payment_type, fill=payment_type)) +
+  geom_bar()  +
+  labs(y = "Number of Trips")
+
+summary(tripdata_df$payment_type)
+```
+
+```{r}
+ggplot(data = tripdata_df, aes(x = RatecodeID, fill=RatecodeID)) +
+  geom_bar() +
+  coord_flip() +
+  labs(y = "Number of Trips")
+
+
+summary(tripdata_df$RatecodeID)
+```
+
+```{r}
+ggplot(data = tripdata_df, aes(x = trip_distance)) +
+  geom_histogram(fill='steelblue', bins = 150) +
+  scale_y_sqrt() +
+  labs(x = "trip distance (miles)", y = "Number of Trips") 
+
+summary(tripdata_df$trip_distance)
+
+```
+
+```{r}
+tripdata_df %>% mutate("pickup" = hour(lpep_pickup_datetime)) %>%
+  group_by(pickup) %>%
+  count() %>%
+  ggplot(aes(pickup, n, fill = pickup)) +
+  geom_col() +
+  labs(x = "Hour of the day", y = "Number of pickups") 
+```
+
+Main points:
+  - We see that Verifone Inc has significantly more customers
+  
+  - Almost all the trips are by street-hail, rather than dispatch
+  
+  - Credit card and cash are the most common payment types, and most all the dataset: this is important because the *tip_amount* does NOT take into account cash tips, and it is possible that if customers paid the fare in cash, they would also more likely pay the tip in cash as well and be left out of the *tip_amount* value. 
+  
+  - The vast majority of rides are standard rate, with only a small proportion falling into the other categories.
+  
+  - There are some outliers in the *trip_distance* field that may need to be excluded, but overwhelmingly trips in this dataset are < 30 miles, and most are < 5 miles
+
+• Feature selection: identify the features/variables that are good indicators and should be used to predict the tip amount. Note: this step involves selecting a subset of the features that will be used to build the predictive model. If you decide to omit any features/variables ensure that you briefly state the reason. 
+
+We will omit *ehail_fee* because all of the values are NA, in addition to the values that  
+```{r}
+# get rid of ehail
+tripdata_df <- select(tripdata_df, -c(ehail_fee)) %>% 
+  drop_na()
+
+```
+
+
+I will start by looking at a correlation matrix of numeric variables
+```{r warning=FALSE, message=FALSE, fig.height=12, fig.width=14}
+# get into correct format:
+cordat <- tripdata_df %>%
+  drop_na() %>% 
+  mutate(passenger_count = as.integer(passenger_count),
+         VendorID = as.integer(VendorID),
+         store_and_fwd_flag = as.integer(store_and_fwd_flag),
+         trip_type = as.integer(trip_type),
+         RatecodeID = as.integer(RatecodeID),
+         PULocationID = as.integer(PULocationID),
+         DOLocationID = as.integer(DOLocationID), 
+         trip_hours = as.numeric(difftime(lpep_dropoff_datetime, lpep_pickup_datetime, units = "hours")),
+         payment_type = as.integer(payment_type)) %>%
+  select(-lpep_dropoff_datetime, -lpep_pickup_datetime)
+
+# create correlation matrix 
+cm <- cor(cordat, method = "pearson")
+
+# plot correlation matrix 
+corrplot(cm, type = "upper", method = "circle", diag = FALSE)
+
+```
+
+
+```{r}
+cm
+```
+
+As mentioned above, *ehail_fee* was dropped because it was all NA values. Additionally, given the values in the correlation matrix/ plot, and from what we know about the values from the data dictionary, it does not appear that *extra*, *mta_tax* and *improvement_surcharge* are relevant because there are only two types available that have little or no effect on the total. Thus, we will drop these four values from our overall model. Additionally, it looks like *store_and_fwd_flag* is not useful in the analysis as a predictor, so we will eliminate that as well 
+```{r warning=FALSE, message=FALSE}
+mod <- tripdata_df %>% 
+  select(-extra, -mta_tax, -improvement_surcharge, -store_and_fwd_flag)
+```
+
+
+
+
+• Feature engineering: (+10 bonus points): create a new feature and analyze its effect on the target variable (e.g. the tip amount). Ensure that you calculate the correlation coefficient and also use visualizations to support your analysis. Summarize your findings and determine if the new feature is a good indicator to predict the tip amount. If it is, ensure that you include it in your model. If it is not a good indicator, explain the reason.
+NOTE: If you attempt this bonus question, ensure that you create a meaningful feature (and nothing arbitrary). If you are unable to think about something meaningful, do not become fixated on this. There is another bonus question that you can attempt later in the practicum.
+
+One feature I think could be useful is the speed at which the person travels: in other words, if someone is stuck in traffic, and the speed they arrive to their destination is slow, does that impact the tip given? To look at this, I will create a new variable for "speed" by dividing the *trip_distance* by the hours (using the difference in *lpep_pickup_datetime* and *lpep_dropoff_datetime*), to calculate *speed* in miles/hours
+```{r warning=FALSE, message=FALSE}
+# create variable for speed (and hours)
+mod <- mod %>% 
+  mutate("trip_hours" = as.numeric(difftime(lpep_dropoff_datetime, lpep_pickup_datetime, units = "hours"))) %>%
+  filter(trip_hours > 0) %>% 
+  mutate("speed" = trip_distance/trip_hours) %>% 
+  drop_na()
+
+# analyze its effect on tip
+mod %>%
+  ggplot(aes(speed, tip_amount)) +
+  geom_point() +
+  labs(y = "Tip Amount ($)", x = "Speed (mph)") +
+  ylim(0, 250) + 
+  xlim(0, 150)
+
+```
+
+Here we can see that it is possible for there to be an effect on speed and tip. and we will plot in the correlation matrix below: 
+```{r}
+# create correlation matrix 
+mod %>% 
+  select(tip_amount, speed) %>% 
+  cor(method = "spearman")
+
+```
+The correlation between speed and tip  = 0.153161.
+
+
+## 2. Question 2 — (20 points) CRISP-DM: Data Preparation 
+Prepare the data for the modeling phase and handle any issues that were identified during the exploratory data analysis. At a minimum, ensure that you:
+• Preprocess the data: handle missing data and outliers, perform any suitable data transformation steps, etc. Also, ensure that you filter the data. The goal is to predict the tip amount, therefore you need to ensure that you extract the data that contains this information. Hint: read the data dictionary.
+
+Very few NA values were dropped in question 1, and variables were converted to factors. Here, I will get rid of invalid data  
+```{r}
+# get rid of invalid data, filter based on what we learned in problem 1
+df <- df_load %>%   
+  filter(year(lpep_pickup_datetime) == 2017 | year(lpep_dropoff_datetime) == 2017) %>% #year
+  filter(month(lpep_pickup_datetime) == 12 | month(lpep_dropoff_datetime) == 12) %>%  # month
+  filter(trip_distance > 0) %>%  #trip distance none
+  filter(tip_amount >= 0) %>% #no negative tips
+  filter(total_amount >= 0) %>% #get rid of negative amounts
+  filter(fare_amount >= 0) %>%  #get rid of  negative fares
+  mutate("trip_hours" = as.numeric(difftime(lpep_dropoff_datetime, lpep_pickup_datetime, units = "hours"))) %>%
+  filter(trip_hours >= 0) %>%
+  mutate("speed" = trip_distance/trip_hours) %>%
+  mutate("wday_pup" = wday(lpep_pickup_datetime),
+         "wday_doff" = wday(lpep_dropoff_datetime),
+         "day_pup" = day(lpep_pickup_datetime)) %>% 
+  select(-mta_tax, -improvement_surcharge, -extra, -store_and_fwd_flag, 
+         -ehail_fee) # get rid of unused variable
+
+df <- df %>% 
+  filter_at(vars(speed), all_vars(!is.infinite(.))) # make sure all is finite numbers
+    
+# look at output of filtered data to make sure correct
+summary(df)
+
+
+```
+All data looks correct, including dates, ranges, and wday (1-7 values), and day (0-31). 
+
+
+• Normalize the data: perform either max-min normalization or z-score standardization on the
+continuous variables/features. 
+```{r}
+min_max_normalization <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+num <- select_if(df, is.numeric)
+
+
+norm <- as.data.frame(lapply(num, min_max_normalization))
+
+summary(norm)
+```
+All values are between 0 and 1, as expected. 
+
+• Encode the data: determine if there are any categorical variables that need to be encoded and
+perform the encoding. 
+
+All data is from the df-load original, so with the exception of the *lpep_pickup_datetime*, and *lpep_dropoff_datetime*, which we have encoded by their day of the week, and day in month.
+
+
+• Prepare the data for modeling: shuffle the data and split it into training and test sets. The percent
+split between the training and test set is your decision. However, clearly indicate the reason.
+```{r}
+# create variable to split the index
+set.seed(123)
+index <- as.integer(nrow(df)*.8)
+
+
+# create train and test from index 
+train <- norm[1:index,]
+test <- norm[(index+1):nrow(df),]
+# train_labels <- 
+
+# make sure split is correct
+dim(train)
+dim(test)
+```
+
+To keep the value in line with what we have done in this course, I will use an 80:20 split of training and testing data, respectively. 
+
+
+## Question 3 — (30 points) CRISP-DM: Modeling 
+In this step you will develop the k-nn regression model. Create a function with the following name and
+arguments: knn.predict(data_train, data_test, k);
+  • data_train represents the observations in the training set, 
+  • data_test represents the observations from the test set, and 
+  • k is the selected value of k (i.e. the number of neighbors).
+
+Perform the following logic inside the function: 
+  • Implement the k-nn algorithm and use it to predict the tip amount for each observation in the test
+set i.e. data_test.
+  • Note: You are not required to implement the k-nn algorithm from scratch. Therefore, this step may only involve providing the training set, the test set, and the value of k to your chosen k-nn library.
+  • Calculate the mean squared error (MSE) between the predictions from the k-nn model and the
+actual tip amount in the test set. 
+```{r}
+knn.predict <- function(data_train, data_test, k) {
+  pred <- knn.reg(train = data_train, test = data_test, k = k, y = data_train$tip_amount)$pred
+  actual <- test$tip_amount
+  mse = mean((actual - pred) ^ 2)
+
+  return(mse)
+}
+```
+
+```{r}
+# test it on value of k = 10
+k10 <- knn.predict(data_train = train, data_test = test, k = 10)
+k10
+```
+When testing on a value of K = 10, the MSE = `r k10`
+
+
+
+## 4. Question 4 — (30 points) CRISP-DM: Evaluation 
+  • Determine the best value of k and visualize the MSE. This step requires selecting different values of k
+and evaluating which produced the lowest MSE. At a minimum, ensure that you perform the following:
+  • Provide at least 20 different values of k to the knn.predict() function (along with the training set
+and the test set).
+Tip: use a loop! Use a loop to call knn.predict() 20 times and in each iteration of the loop, provide
+a different value of k to knn.predict(). Ensure that you save the MSE that’s returned. 
+```{r cache=TRUE}
+# values of K to try:
+k = seq(1, 300, 15)
+
+# get mses for each value of k:
+knn_mses = sapply(k, knn.predict, data_train = train, data_test = test)
+
+# put results into dataframe
+output <- data.frame(k, knn_mses)
+colnames(output) <- c("K", "MSE")
+
+# view
+output
+
+```
+
+  • Create a line chart and plot each value of k on the x-axis and the corresponding MSE on the y-axis. Explain the chart and determine which value of k is more suitable and why. 
+```{r}
+ggplot(output, aes(x = K, y = MSE)) +
+  geom_line() +
+  labs(title = "K vs MSE") +
+  xlim(0, 300)
+```
+From the output, we see that the value of k with the lowest MSE  = `r k[which.min(knn_mses)]` -- while we only checked 20 values of K, we can assume that it is within the region of 16 as the best value
+
+  
+  • What are your thoughts on the model that you developed and the accuracy of its predictions? Would
+you advocate for its use to predict the tip amount of future trips? Explain your answer.
+
+As George Box once said, "All models are wrong, but some are useful". I think that applies here -- it will not perfectly predict tip amount, but I do think the variables will at least provide an indication of what direction/general area a tip could be. One reason I think the model may not be perfect is because some variables are very much over represented -- the *majority* of the data are from 1 passenger rides, or Verifone LLC vendor, so these variables may be misrepresented in the training data, and lead to it claiming to have more or less importance in our model than it should.  One major flaw of this model, I think, is also that there are a lot of people who pay in cash for their trip, while *tip_amount* is only calculated from credit card charges -- it is reasonable to assume that someone paying for the cab in cash would also pay the tip in cash, so it is very likely this is not well captured in the model here. 
+
+
+## 5. Question 5 — (10 optional/bonus points) 
+Evaluate the effect of the percentage split for the training and test sets and determine if a different split ratio improves your model’s ability to make better predictions. 
+
+I will try the same analyses as above, except with 60:40 testing split, and then look for best value of K
+```{r}
+# create variable to split the index
+set.seed(123)
+index2 <- as.integer(nrow(df)*.6)
+
+# create train and test from index 
+train2 <- norm[1:index2,]
+test2 <- norm[(index2+1):nrow(df),]
+
+# make sure split is correct
+dim(train2)
+dim(test2)
+```
+
+Will rerun again with new split to get MSEs with different values of K.
+```{r cache=TRUE}
+# values of K to try:
+k = seq(1, 300, 25)
+
+# get mses for each value of k:
+knn_mses2 = sapply(k, knn.predict, data_train = train2, data_test = test2)
+```
+
+
+```{r}
+# put results into dataframe
+output2 <- data.frame(k, knn_mses2)
+colnames(output2) <- c("K", "MSE")
+
+# view
+output2
+
+```
+
+```{r}
+ggplot(output2, aes(x = K, y = MSE)) +
+  geom_line() +
+  labs(title = "K vs MSE -- 60:40 train:test split") +
+  xlim(0, 300)
+```
+
+From the output, we see that the value of k with the lowest MSE  = `r k[which.min(knn_mses2)]`. This is interesting, because what it shows is that when we split the training:testing 60:40, the value of K is much higher with the lowest MSE than it was with 80:20, where lowest MSE was k = 16. This could be due to some variables being over-represented in the training set when the training sample is larger, but is definitely worth looking at further if more time permitted. 
