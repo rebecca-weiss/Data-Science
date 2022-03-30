@@ -1,0 +1,177 @@
+---
+title: "DA5020 -- Asssigment 11"
+author: "Rebecca Weiss"
+date: "12/3/2021"
+output: pdf_document
+---
+***
+Clear the workspace:
+```{r}
+rm(list = ls())
+```
+
+```{r setup, warning=FALSE, message=FALSE}
+#load all necessary libraries
+library(tidyverse)
+library(caret)
+```
+
+
+## 1. Load the diabetes dataset “diabetes.csv”, inspect the data and gather any relevant summary statistics.
+```{r}
+# load datasdet downloaded from kaggle 
+df <- read_csv("diabetes.csv")
+```
+
+
+```{r}
+# get summary stats/info
+summary(df)
+str(df)
+```
+
+From inspecting the data, we can see that there are no missing data and that all are coded with a 0 or 1 for the *Outcome*, and all explanatory variables are numeric which I will convert to a factor.  From the summary statistics, the spread looks pretty good with all means/medians being similar, with the exception of insulin, which has a wide spread and is skewed to lower numbers. According to the data description in Kaggle, the value is a 2-hour serum insulin, so it is possible that this skew is expected. Because of this, for now I will leave the outliers impacting the distribution. 
+```{r}
+df$Outcome <- factor(df$Outcome, levels = c(0, 1))
+str(df$Outcome)
+```
+
+## 2. Normalize the explanatory variables using min-max normalization.
+```{r}
+# create a function
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x))) 
+}
+
+# apply over all explanatory variables
+df_norm <- cbind(normalize(df[-9]), df[9])
+summary(df_norm)
+```
+From normalizing the original *df*, we can put all the explanatory variables between 0 and 1 to minimize the standard deviations. Here, we see that the insulin value mentioned above is still skewed, but that standard deviation being lower should decrease the impact of outliers in our model. 
+
+## 3. Split the data into a training set and a test set i.e. perform an 80/20 split; 80% of the data should be designated as the training data and 20% as the test data. 
+```{r}
+# create variable to split the index
+set.seed(123)
+index <- as.integer(nrow(df)*.8)
+
+
+# create train and test from index 
+train <- df_norm[1:index,]
+test <- df_norm[(index+1):nrow(df),]
+
+
+# make sure split is correct
+dim(train)
+dim(test)
+```
+
+
+## 4. Create a function called knn_predict(). The function should accept the following as input: the training set, the test set and the value of k. For example knn_predict(train.data, test.data, k).
+• Implement the logic for the k-nn algorithm from scratch (without using any libraries). There is an
+example in the lecture series on Canvas. The goal of your k-nn algorithm is to predict the Outcome (i.e. whether or not the patient has diabetes) using the explanatory variables.
+• The function should return a list/vector of predictions for all observations in the test set.
+
+```{r warning=FALSE, message=FALSE}
+# Creating the component functions that will be used in the custom k-NN implementation
+
+# dist() - calculates the Euclidean distance between two vectors of equal size containing numeric elements
+dist <- function(p,q)
+{
+  p <- unlist(p)
+  q <- unlist(q)
+  dist <- sqrt(sum((p - q)^2))
+  return (dist)
+}
+
+
+# neighbors() - get vector of distances between an object u and a dataframe of features
+neighbors <- function(train, u) {
+  
+  newdf <- train %>% 
+    rowwise() %>%
+    mutate(distance = dist(train[-9], u))
+  
+  train$distance <- newdf$distance
+  
+  return (train)
+}
+
+
+# k.closest - get smallest k values in a vector of values
+k.closest <- function(neighbors,k)
+{
+  ordered.neighbors <- neighbors[order(neighbors$distance),] 
+  closest <- ordered.neighbors[1:k,]
+  
+  return(closest)
+}
+
+
+# find mean of k closest neighbors
+k.mean <- function(x) 
+{
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+```
+
+
+```{r warning=FALSE, message=FALSE}
+knn_predict <- function(train, test, k) {
+  result = c()
+  
+  # Iterating through and classifying every row in the test data set
+  for (i in 1:nrow(test)) {
+    u <- test[i,]
+    nb <- neighbors(train,u)
+    k.nbrs <- k.closest(nb,k)
+  
+    # Finding the mean of the k closest values
+    res <- k.mean(as.vector(k.nbrs$Outcome))
+    result <- c(result, res)
+  }
+  
+  return(result)
+}
+```
+
+
+## 5. Demonstrate that the knn_predict() function works and use it to make predictions for the test set. You can determine a suitable value of k for your demonstration. After which, analyze the results that were returned from the function using a confusion matrix. Explain the results. Note: refer to the ‘Useful Resources’ section for more information on building a confusion matrix in R.
+```{r warning=FALSE, message=FALSE}
+# try K = 4, store into "predicted" variable
+predicted <- knn_predict(train, test, 4)
+# convert to factor 
+predicted <- factor(predicted, levels = c(0, 1))
+
+# Printing the results as a table
+table(predicted, test$Outcome)
+
+# create a confusion matrix
+cm <- confusionMatrix(predicted, test$Outcome, positive = '1')
+```
+From the output, we see that the accuracy is not great, which = `r cm$overall[1]` when K = 4. We also notice that the model only predicted patients as having diabetes, as we can see from there being no "0" in the outcome for predicted. 
+
+## 6 (bonus). Repeat question 5 and perform an experiment using different values of k. Ensure that you try at least 5 different values of k and display the confusion matrix from each attempt. Which value of k produced the most accurate predictions?
+```{r warning=FALSE, message=FALSE}
+# create function
+diff_ks <- function(i) {
+  predicted <- knn_predict(train, test, i)
+  # convert to factor 
+  predicted <- factor(predicted, levels = c(0, 1))
+  
+  print(paste0('Creating a confusion matrix with ', i,' value of K.'))
+  # create a confusion matrix
+  cm <- confusionMatrix(predicted, test$Outcome, positive = '1')
+  print(paste0('Accuracy =', cm$overall[1],' when K = ', i))
+  return(cm)
+}
+
+
+```
+
+```{r warning=FALSE, message=FALSE}
+k_to_test = seq(5, 18, 3)
+lapply(k_to_test, diff_ks)
+```
+
