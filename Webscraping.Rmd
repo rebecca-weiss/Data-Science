@@ -1,0 +1,137 @@
+---
+title: "Webscraping"
+author: "Rebecca Weiss"
+date: "10/31/2021"
+output: pdf_document
+---
+***
+```{r setup, warning=FALSE, message=FALSE}
+#load all necessary libraries
+library(XML)
+library(RCurl)
+library(scrapeR)
+library(rvest)
+library(tidyverse)
+```
+
+Clear the workspace:
+```{r}
+rm(list = ls())
+```
+
+
+# 1. In this question, you will use rvest to parse the HTML and extract the tabular data on the “Percent ofpopulation living on less than $1.90, $3.20 and $5.50 a day” from the Wikipedia page.
+
+## 1. (10 pts) Scrape the data from the webpage and extract the following fields: Country, < $1.90,  < $3.20, < $5.50, Year and Continent. Prepare the data for analysis and ensure that the columns have meaningful names.
+```{r, warning=FALSE, message=FALSE}
+# download HTML from URL, scrape table and save into df
+url <- "https://en.wikipedia.org/wiki/List_of_countries_by_percentage_of_population_living_in_poverty"
+html_data <- read_html(url)
+df <- html_data %>% 
+  html_node('.wikitable') %>% 
+  html_table()
+
+# inspect table data
+str(df)
+
+# rename columns
+df <- rename(df, '< $1.90' = `< $1.90[8][5]`, 
+       '< $3.20' = `< $3.20[6]`, 
+       '< $5.50' = `< $5.50[7]`)
+
+
+# need to remove % and divide by 100 to get numeric 
+df$`< $1.90` <- as.numeric(sub("%", "",df$`< $1.90`,fixed=TRUE))/100
+df$`< $3.20` <- as.numeric(sub("%", "",df$`< $3.20`,fixed=TRUE))/100
+df$`< $5.50` <- as.numeric(sub("%", "",df$`< $5.50`,fixed=TRUE))/100
+
+head(df)
+```
+
+
+
+## 2. (10 pts) Calculate the mean and the standard deviation of the percent of the population living under $5.50 per day for each continent. Perform a comparative analysis (i.e. explanation) of the data from each continent.
+```{r}
+# group by continent, calculate mean and sd, sort by largest
+under550 <- df %>% 
+  group_by(Continent) %>%
+  summarise('mean < $5.50' = mean(`< $5.50`),
+            'stdev < $5.50' = sd(`< $5.50`)) %>% 
+  arrange(desc(`mean < $5.50`))
+
+# view results
+under550
+
+```
+
+
+## 3. (5 pts) What are the 10 countries with the highest percentage of the population having an income of less than $5.50 per day? Using a suitable chart, display the country name, the percentage and color- code by the Continent. Summarize your findings.
+```{r}
+# filter based on top 10 with < $ 5.50 
+top10 <- df %>% 
+  # select(Country, `< $5.50`, Continent) %>% 
+  arrange(desc(`< $5.50`)) %>% 
+  slice_head(n = 10)
+
+# view results
+top10
+
+# visualize results 
+ggplot(top10, aes(x=reorder(Country, `< $5.50`), y=`< $5.50`, fill = Continent,
+                  label=scales::percent(`< $5.50`))) + 
+  geom_bar(stat='identity') +
+  labs(x = "Country",
+       y = "Percent of Population",
+       title = "Top 10 Countries with Highest Percent of Population Earning < $5.50 per Day") +
+  scale_y_continuous(labels = scales::percent) +
+  geom_text(position = position_dodge(width = .9),
+            hjust = 1) +
+  theme(plot.title.position = "plot") +
+  theme(legend.position = "top") +
+  coord_flip()
+```
+As we can see from the output, the top 10 countries with the highest percentage of the population earning < $5.50 per day have almost *all* of their population earning that little, as they all have values greater than 93%. In the plot, you can see that 9 of the top 10 countries are in the continent of Africa, with the exception of East Timor, which are on the continent of Asia. 
+
+## 4. (5 pts) Explore the countries with the lowest percentage of the population having an income of less than $5.50 per day. What are the 5 countries with the lowest percentage, and how does the results compare to the other income groups (i.e. $1.90 and $3.20)?
+```{r}
+# filter based on lowest with < $ 5.50 
+bottom5 <- df %>% 
+  # select(Country, `< $5.50`, Continent) %>% 
+  arrange((`< $5.50`)) %>% 
+  slice_head(n = 5)
+
+# view results
+bottom5
+```
+From the output, we see the bottom 5 countries with percentage of population earning < 5.50 a day are Switzerland, Cyprus, Finland, Slovenia and Belarus, all with < 0.2% of their population earning < 5.50. These are all located on the continent of Europe, and interestingly, these 5 countries have virtually none of their population earning < 1.90 or 3.20 per day.
+
+## 5. (20 pts) Extract the data for any two continents of your choice. For each continent, visualize the percent of the population living on less than $1.90, $3.20 and $5.50 using box plots. Compare and contrast the results, while ensuring that you discuss the distribution, skew and any outliers that are evident.
+```{r}
+# select two continents: I will use North and South America
+# pivot longer so can more easily group in box plot
+conts <- df %>% 
+  filter(Continent == "North America" | Continent == "South America") %>%
+  group_by(Continent) %>% 
+  pivot_longer(cols = c(`< $1.90`, `< $3.20`,`< $5.50`),
+               names_to = c("category"),
+               values_to = "values")
+
+# view output
+conts
+```
+
+
+```{r}
+# create a grouped boxplot for each continent, separated by category of income
+ggplot(conts, aes(x=Continent, y=values, fill=category)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y="Percentage of Population",
+       x="Continent",
+       title = "Percentage of Population Earning in 3 Income Categories in North and South America") +
+  theme(plot.title.position = "plot") 
+
+```
+From the output boxplot, we see that there is a drastic range in the values for percentage of population earning < 5.50, 3.20, and 1.90 between North and South America. In general, North America has a wider distribution for all 3 categories than South America. In both continents, the < 1.90 and 3.20 both have outliers that exceed much beyond the boxplot range. In North America, the IQR depicted in the boxplots appears to show that the percentage of the population falling into any of the three categories is wider than the South America one, but the median value sits at about the same place. Additionally, it looks like both continents have the widest range for < 5.50, but the North America group has a skew towards higher percentage of the population than lower falling into each category, which you can see by the length of the "whiskers" on top of the boxes on the left. 
+
+
